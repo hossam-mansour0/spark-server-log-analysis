@@ -1,0 +1,131 @@
+
+
+services:
+
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - JAVA_HOME=/opt/bitnami/java
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      - ./spark:/opt/bitnami/spark/work
+    networks:
+      - airflow-net
+  spark-worker:
+    image: bitnami/spark:latest
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - JAVA_HOME=/opt/bitnami/java
+
+    depends_on:
+      - spark-master
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./app:/app
+    networks:
+      - airflow-net
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - airflow-net
+
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile-airflow 
+    container_name: airflow
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=hcmkpnUyj9TzehXxToueTJ8o3xsF1aobMsbx2UTO9EQ=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./spark:/opt/bitnami/spark/work
+      - ./data:/opt/airflow/data
+    ports:
+      - "8082:8080"
+    command: bash -c "airflow db upgrade && airflow users create --username admin --firstname Air --lastname Flow --role Admin --email admin@example.com --password admin && airflow webserver"
+    networks:
+      - airflow-net
+  airflow-scheduler:
+    image: apache/airflow:2.9.1
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      - postgres
+      - airflow  
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=hcmkpnUyj9TzehXxToueTJ8o3xsF1aobMsbx2UTO9EQ=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./spark:/opt/bitnami/spark/work
+    command: >
+      bash -c "pip install apache-airflow-providers-apache-spark &&
+               airflow scheduler"
+    networks:
+      - airflow-net
+
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - airflow-net
+
+
+  streamlit:
+    build: ./dashboard
+    container_name: streamlit-dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      - minio
+    volumes:
+      - ./dashboard:/app
+    networks:
+      - airflow-net
+    
+  
+volumes:
+  minio-data:
+  postgres-data:
+networks:
+  airflow-net:
+
